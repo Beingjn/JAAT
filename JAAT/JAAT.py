@@ -42,7 +42,7 @@ def get_context(text, keywords, n):
 
     words = text.split()
     found_index = [i for i, w in enumerate(words) if any(k.strip() in w for k in keywords)]
-    context = [" ".join(words[max(0, idx-n):min(idx+1, len(words))]) for idx in found_index]
+    context = [" ".join(words[max(0, idx-n):min(idx+n+1, len(words))]) for idx in found_index]
 
     if len(context) > 0:
         return context
@@ -107,7 +107,7 @@ class TaskMatch():
             max_length=64,
             truncation=True
         )
-        self.pipe = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=mp.cpu_count())
+        self.pipe = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=0)
         print("Finished.", flush=True)
 
     def get_candidates(self, text):
@@ -457,7 +457,7 @@ class ActivityMatch():
             max_length=64,
             truncation=True
         )
-        self.pipe = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=mp.cpu_count())
+        self.pipe = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=0)
         print("Finished.", flush=True)
 
     def get_candidates(self, text):
@@ -563,16 +563,19 @@ class JobTag():
         return (self.class_name, 1 if sum(res) > 0 else 0)
     
     def get_tag_batch(self, texts, progress_bar=False):
-        with mp.Pool(mp.cpu_count(), init_pool(self.clf)) as pool:
-            c = pool.imap(partial(get_context, keywords=self.keywords[self.class_name], n=self.n), texts)
-            all_contexts = list(c)
-            if progress_bar == True:
-                p = tqdm(pool.imap(classify, all_contexts), total=len(all_contexts))
-            else:
-                p = pool.imap(classify, all_contexts)
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(
+            processes=min(4, ctx.cpu_count()),
+            initializer=init_pool,                # pass the function
+            initargs=(self.clf,),                 # and its args
+        ) as pool:
+            build_ctx = partial(get_context, keywords=self.keywords[self.class_name], n=self.n)
+            all_contexts = list(pool.imap(build_ctx, texts, chunksize=64))
+            iterator = pool.imap(classify, all_contexts, chunksize=64)
+            p = tqdm(iterator, total=len(all_contexts)) if progress_bar else iterator
             res = list(p)
-            pool.close()
         return res
+
     
 class WageExtract():
     def __init__(self, batch_size=2048):
@@ -601,7 +604,7 @@ class WageExtract():
             max_length=64,
             truncation=True
         )
-        self.ispay_pipe = pipeline("text-classification", model=model, tokenizer=tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=mp.cpu_count())
+        self.ispay_pipe = pipeline("text-classification", model=model, tokenizer=tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=0)
 
         model = model = AutoModelForTokenClassification.from_pretrained("loyoladatamining/wage-ner-v2", max_length=128, id2label={0:'O', 1:'B-MIN', 2:'B-MAX'}, label2id={'O': 0, 'B-MIN': 1, 'B-MAX': 2})
         tokenizer = AutoTokenizer.from_pretrained(
@@ -778,7 +781,7 @@ class SkillMatch():
             max_length=64,
             truncation=True
         )
-        self.pipe = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=mp.cpu_count())
+        self.pipe = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, max_length=64, device=self.device, truncation=True, batch_size=self.batch_size, num_workers=0)
         print("Finished.", flush=True)
 
     def get_candidates(self, text):
